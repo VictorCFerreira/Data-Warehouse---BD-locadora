@@ -13,13 +13,13 @@ CREATE TABLE tempo (
 
 -- Dimensão: localizacao
 CREATE TABLE localizacao (
-    id INT IDENTITY(1,1) PRIMARY KEY,
+    id INT PRIMARY KEY,
     cidade NVARCHAR(100) NOT NULL
 );
 
 -- Dimensão: funcionário
 CREATE TABLE funcionario (
-    id INT IDENTITY(1,1) PRIMARY KEY,
+    id INT PRIMARY KEY,
     nome NVARCHAR(100) NOT NULL,
     id_localizacao INT NOT NULL,
     FOREIGN KEY (id_localizacao) REFERENCES localizacao(id)
@@ -27,7 +27,7 @@ CREATE TABLE funcionario (
 
 -- Dimensão: cliente
 CREATE TABLE cliente (
-    id INT IDENTITY(1,1) PRIMARY KEY,
+    id INT PRIMARY KEY,
     nome NVARCHAR(100) NOT NULL,
     id_localizacao INT NOT NULL,
     FOREIGN KEY (id_localizacao) REFERENCES localizacao(id)
@@ -35,22 +35,22 @@ CREATE TABLE cliente (
 
 -- Dimensão: filme
 CREATE TABLE filme (
-    id INT IDENTITY(1,1) PRIMARY KEY,
+    id INT PRIMARY KEY,
     nome NVARCHAR(200) NOT NULL
 );
 
 -- Dimensão: categoria
 CREATE TABLE categoria (
-    id INT IDENTITY(1,1) PRIMARY KEY,
+    id INT PRIMARY KEY,
     nome NVARCHAR(100) NOT NULL
 );
-
 
 -- Dimensão: ator
 CREATE TABLE ator (
-    id INT IDENTITY(1,1) PRIMARY KEY,
+    id INT PRIMARY KEY,
     nome NVARCHAR(100) NOT NULL
 );
+
 
 -- Tabela Fato: empréstimo
 CREATE TABLE emprestimo (
@@ -79,7 +79,7 @@ CREATE TABLE emprestimo (
 
 --TEMPO
 
-CREATE PROCEDURE ETL_tempo
+CREATE OR ALTER PROCEDURE ETL_tempo
 AS
 BEGIN
 DECLARE @v_min_date DATETIME;
@@ -121,21 +121,20 @@ select * from DW.dbo.tempo;
 
 --CATEGORIA
 
-CREATE PROCEDURE ETL_categoria
+CREATE OR ALTER PROCEDURE ETL_categoria
 AS
 BEGIN
     BEGIN TRANSACTION;
     BEGIN TRY
-        -- Inserir as categorias somente se não existirem
-        INSERT INTO DW.dbo.categoria (nome)
-        SELECT
-            f.name AS nome
-        FROM DBO.dbo.category f
-        WHERE NOT EXISTS (
-            SELECT 1
-            FROM DW.dbo.categoria c
-            WHERE c.nome = f.name
-        );
+        MERGE INTO DW.dbo.categoria AS target
+        USING (
+            SELECT category_id AS id, name AS nome FROM DBO.dbo.category
+        ) AS source
+        ON target.id = source.id
+        WHEN MATCHED AND target.nome <> source.nome THEN
+            UPDATE SET target.nome = source.nome
+        WHEN NOT MATCHED THEN
+            INSERT (id, nome) VALUES (source.id, source.nome);
 
         COMMIT TRANSACTION;
     END TRY
@@ -149,23 +148,26 @@ exec ETL_categoria;
 
 select * from DW.dbo.categoria;
 
+
 ------------------------------------------------------------------------------------
 
 --ATOR
 
-CREATE PROCEDURE ETL_ator
+CREATE OR ALTER PROCEDURE ETL_ator
 AS
 BEGIN
     BEGIN TRANSACTION;
     BEGIN TRY
-        INSERT INTO DW.dbo.ator (nome)
-        SELECT
-            CONCAT(a.first_name, ' ', a.last_name) AS nome
-        FROM DBO.dbo.actor a   WHERE NOT EXISTS (
-            SELECT 1
-            FROM DW.dbo.ator dwa
-            WHERE dwa.nome = CONCAT(a.first_name, ' ', a.last_name)
-        );
+        MERGE INTO DW.dbo.ator AS target
+        USING (
+            SELECT actor_id AS id, CONCAT(first_name, ' ', last_name) AS nome FROM DBO.dbo.actor
+        ) AS source
+        ON target.id = source.id
+        WHEN MATCHED AND target.nome <> source.nome THEN
+            UPDATE SET target.nome = source.nome
+        WHEN NOT MATCHED THEN
+            INSERT (id, nome) VALUES (source.id, source.nome);
+
         COMMIT TRANSACTION;
     END TRY
     BEGIN CATCH
@@ -174,28 +176,29 @@ BEGIN
     END CATCH
 END;
 
+
 exec ETL_ator;
 
 select * from DW.dbo.ator;
 
+
 ------------------------------------------------------------------------------------
 
 --FILME
-
-CREATE PROCEDURE ETL_filme
+CREATE OR ALTER PROCEDURE ETL_filme
 AS
 BEGIN
     BEGIN TRANSACTION;
     BEGIN TRY
-        INSERT INTO DW.dbo.filme (nome)
-        SELECT
-            f.title AS nome
-        FROM DBO.dbo.film f
-        WHERE NOT EXISTS (
-            SELECT 1
-            FROM DW.dbo.filme c
-            WHERE c.nome = f.title
-        );
+        MERGE INTO DW.dbo.filme AS target
+        USING (
+            SELECT film_id AS id, title AS nome FROM DBO.dbo.film
+        ) AS source
+        ON target.id = source.id
+        WHEN MATCHED AND target.nome <> source.nome THEN
+            UPDATE SET target.nome = source.nome
+        WHEN NOT MATCHED THEN
+            INSERT (id, nome) VALUES (source.id, source.nome);
 
         COMMIT TRANSACTION;
     END TRY
@@ -210,21 +213,29 @@ exec ETL_filme;
 
 select * from DW.dbo.filme;
 
+
 ------------------------------------------------------------------------------------
 
 -- LOCALIZAÇÃO
 
-CREATE PROCEDURE ETL_localizacao
+CREATE OR ALTER PROCEDURE ETL_localizacao
 AS
 BEGIN
     BEGIN TRANSACTION;
     BEGIN TRY
-        INSERT INTO DW.dbo.localizacao (cidade)
-        SELECT c.city AS cidade
-        FROM dbo.dbo.city c
-        WHERE NOT EXISTS (
-            SELECT 1 FROM DW.dbo.localizacao dwl WHERE dwl.cidade = c.city
-        );
+        MERGE INTO DW.dbo.localizacao AS target
+        USING (
+            SELECT 
+                c.city_id AS id, 
+                CONCAT(c.city, ' - ', co.country) AS cidade
+            FROM dbo.dbo.city c
+            INNER JOIN dbo.dbo.country co ON c.country_id = co.country_id
+        ) AS source
+        ON target.id = source.id
+        WHEN MATCHED AND target.cidade <> source.cidade THEN
+            UPDATE SET target.cidade = source.cidade
+        WHEN NOT MATCHED THEN
+            INSERT (id, cidade) VALUES (source.id, source.cidade);
 
         COMMIT TRANSACTION;
     END TRY
@@ -234,26 +245,33 @@ BEGIN
     END CATCH
 END;
 
-EXEC ETL_localizacao;
 
-SELECT * FROM DW.dbo.localizacao;
+exec ETL_localizacao;
+
+select * from DW.dbo.localizacao;
+
 --------------------------------------------------------------------------------------
 
 -- CLIENTE
-CREATE PROCEDURE ETL_cliente
+CREATE OR ALTER PROCEDURE ETL_cliente
 AS
 BEGIN
     BEGIN TRANSACTION;
     BEGIN TRY
-        INSERT INTO DW.dbo.cliente (nome, id_localizacao)
-        SELECT CONCAT(c.first_name, ' ', c.last_name) AS nome, dwl.id AS id_localizacao
-        FROM dbo.dbo.customer c
-        INNER JOIN dbo.dbo.address a ON c.address_id = a.address_id
-        INNER JOIN dbo.dbo.city ci ON a.city_id = ci.city_id
-        INNER JOIN DW.dbo.localizacao dwl ON ci.city = dwl.cidade
-        WHERE NOT EXISTS (
-            SELECT 1 FROM DW.dbo.cliente cl WHERE cl.nome = CONCAT(c.first_name, ' ', c.last_name)
-        );
+        MERGE INTO DW.dbo.cliente AS target
+        USING (
+            SELECT c.customer_id AS id, 
+                   CONCAT(c.first_name, ' ', c.last_name) AS nome, 
+                   ci.city_id AS id_localizacao
+            FROM dbo.dbo.customer c
+            INNER JOIN dbo.dbo.address a ON c.address_id = a.address_id
+            INNER JOIN dbo.dbo.city ci ON a.city_id = ci.city_id
+        ) AS source
+        ON target.id = source.id
+        WHEN MATCHED AND (target.nome <> source.nome OR target.id_localizacao <> source.id_localizacao) THEN
+            UPDATE SET target.nome = source.nome, target.id_localizacao = source.id_localizacao
+        WHEN NOT MATCHED THEN
+            INSERT (id, nome, id_localizacao) VALUES (source.id, source.nome, source.id_localizacao);
 
         COMMIT TRANSACTION;
     END TRY
@@ -263,28 +281,34 @@ BEGIN
     END CATCH
 END;
 
-EXEC ETL_cliente;
 
-SELECT * FROM DW.dbo.cliente;
+exec ETL_cliente;
+
+select * from DW.dbo.cliente;
 
 -----------------------------------------------------------------------------------------------------
 
-—- FUNCIONÁRIO
+-- FUNCIONÁRIO
 
-CREATE PROCEDURE ETL_Funcionario
+CREATE OR ALTER PROCEDURE ETL_Funcionario
 AS
 BEGIN
     BEGIN TRANSACTION;
     BEGIN TRY
-        INSERT INTO DW.dbo.funcionario (nome, id_localizacao)
-        SELECT CONCAT(s.first_name, ' ', s.last_name) AS nome, dwl.id AS id_localizacao
-        FROM dbo.dbo.staff s
-        INNER JOIN dbo.dbo.address a ON s.address_id = a.address_id
-        INNER JOIN dbo.dbo.city ci ON a.city_id = ci.city_id
-        INNER JOIN DW.dbo.localizacao dwl ON ci.city = dwl.cidade
-        WHERE NOT EXISTS (
-            SELECT 1 FROM DW.dbo.funcionario f WHERE f.nome = CONCAT(s.first_name, ' ', s.last_name)
-        );
+        MERGE INTO DW.dbo.funcionario AS target
+        USING (
+            SELECT s.staff_id AS id, 
+                   CONCAT(s.first_name, ' ', s.last_name) AS nome, 
+                   ci.city_id AS id_localizacao
+            FROM dbo.dbo.staff s
+            INNER JOIN dbo.dbo.address a ON s.address_id = a.address_id
+            INNER JOIN dbo.dbo.city ci ON a.city_id = ci.city_id
+        ) AS source
+        ON target.id = source.id
+        WHEN MATCHED AND (target.nome <> source.nome OR target.id_localizacao <> source.id_localizacao) THEN
+            UPDATE SET target.nome = source.nome, target.id_localizacao = source.id_localizacao
+        WHEN NOT MATCHED THEN
+            INSERT (id, nome, id_localizacao) VALUES (source.id, source.nome, source.id_localizacao);
 
         COMMIT TRANSACTION;
     END TRY
@@ -294,6 +318,7 @@ BEGIN
     END CATCH
 END;
 
-EXEC ETL_Funcionario;
+exec ETL_Funcionario;
 
-SELECT * FROM DW.dbo.funcionario;
+select * from DW.dbo.funcionario;
+
